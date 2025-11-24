@@ -22,6 +22,16 @@ if (!isset($mysqli) || !($mysqli instanceof mysqli)) {
 session_start();
 $currentUser = $_SESSION['user'] ?? null;
 
+// role helper: adjust the array keys if your session uses a different field name for role (e.g. 'Role' or 'UserType')
+function user_has_role($user, array $roles = []) {
+    if (!$user) return false;
+    $role = $user['role'] ?? $user['Role'] ?? $user['UserType'] ?? null;
+    if (!$role) return false;
+    return in_array(strtolower($role), array_map('strtolower', $roles), true);
+}
+
+$canViewRecords = user_has_role($currentUser, ['admin', 'lecturer']);
+
 // Build staff and student options for select inputs
 $staffOptions = '';
 $studentOptions = '';
@@ -172,243 +182,251 @@ if ($result === false) {
 
     <div class="d-flex align-items-center justify-content-between mb-3">
         <h1 class="mb-0">Incidents</h1>
-        <?php if ($currentUser): ?>
+        <?php if ($currentUser && $canViewRecords): ?>
             <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addIncidentModal">+ Add Incident</button>
         <?php endif; ?>
     </div>
 
-    <!-- Login Modal -->
-    <div class="modal fade" id="loginModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <form id="loginForm" autocomplete="off" novalidate>
-                    <input type="text" name="fakeuser" id="fakeuser" autocomplete="off" style="position:absolute;left:-9999px;top:-9999px" aria-hidden="true" tabindex="-1">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Login</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div id="loginAlert" class="alert alert-danger d-none" role="alert"></div>
-                        <div class="mb-3">
-                            <label class="form-label">Username</label>
-                            <input name="username" type="text" class="form-control" required autofocus autocomplete="off">
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">Password</label>
-                            <input name="password" type="password" class="form-control" required autocomplete="new-password">
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" id="loginSubmit" class="btn btn-primary">Sign in</button>
-                    </div>
-                </form>
-            </div>
+    <?php if (! $canViewRecords): ?>
+        <!-- non-authorised users only see the hero bar -->
+        <div class="alert alert-info">
+            You must be signed in as a lecturer or administrator to view incident and student records.
         </div>
-    </div>
-
-    <!-- Add Incident Modal -->
-    <div class="modal fade" id="addIncidentModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content">
-                <form id="addIncidentForm" autocomplete="off" novalidate>
-                    <input type="text" name="fakeuser2" autocomplete="off" style="position:absolute;left:-9999px;top:-9999px" aria-hidden="true" tabindex="-1">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Add Incident</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div id="addIncidentAlert" class="alert alert-danger d-none" role="alert"></div>
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <label class="form-label">Report date</label>
-                                <input name="report_date" type="datetime-local" class="form-control" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Location</label>
-                                <input name="location" type="text" class="form-control" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Reporter (staff)</label>
-                                <select name="reporter_id" class="form-select" required>
-                                    <option value="">-- select reporter --</option>
-                                    <?php echo $staffOptions; ?>
-                                </select>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Student</label>
-                                <select name="student_id" class="form-select" required>
-                                    <option value="">-- select student --</option>
-                                    <?php echo $studentOptions; ?>
-                                </select>
-                            </div>
-                            <div class="col-12">
-                                <label class="form-label">Description</label>
-                                <textarea name="description" class="form-control" rows="4" required></textarea>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">Status</label>
-                                <select name="status" class="form-select" required>
-                                    <option value="Pending">Pending</option>
-                                    <option value="In Review">In Review</option>
-                                    <option value="Closed">Closed</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" id="addIncidentSubmit" class="btn btn-success">Create Incident</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <?php if ($result->num_rows === 0): ?>
-        <div class="alert alert-info">No incidents found.</div>
     <?php else: ?>
-        <div class="table-responsive">
-            <table class="table table-striped table-hover table-sm align-middle">
-                <thead class="table-light small">
-                    <tr>
-                        <th scope="col">#</th>
-                        <th scope="col">Date</th>
-                        <th scope="col">Location</th>
-                        <th scope="col">Reporter</th>
-                        <th scope="col">Student</th>
-                        <th scope="col">Status</th>
-                        <th scope="col">Created</th>
-                        <th scope="col">Description</th>
-                        <th class="text-end"> </th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php while ($row = $result->fetch_assoc()):
-                    $id = (int)$row['IncidentID'];
-                ?>
-                    <tr
-                        data-incident-id="<?php echo $id; ?>"
-                        data-report-date="<?php echo htmlspecialchars($row['ReportDate'], ENT_QUOTES, 'UTF-8'); ?>"
-                        data-location="<?php echo htmlspecialchars($row['Location'], ENT_QUOTES, 'UTF-8'); ?>"
-                        data-reporter-id="<?php echo (int)($row['ReporterStaffID'] ?? 0); ?>"
-                        data-student-id="<?php echo (int)($row['StudentID'] ?? 0); ?>"
-                        data-status="<?php echo htmlspecialchars($row['Status'], ENT_QUOTES, 'UTF-8'); ?>"
-                        data-description="<?php echo htmlspecialchars($row['Description'], ENT_QUOTES, 'UTF-8'); ?>"
-                    >
-                        <td class="fw-semibold"><?php echo $id; ?></td>
-                        <td><?php echo htmlspecialchars($row['ReportDate'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars($row['Location'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars($row['ReporterName'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars($row['StudentName'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars($row['Status'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars($row['CreatedAt'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td style="max-width:20rem;">
-                            <div class="text-truncate" style="max-width:11.5rem;" title="<?php echo htmlspecialchars($row['Description'], ENT_QUOTES, 'UTF-8'); ?>">
-                                <?php echo htmlspecialchars($row['Description'], ENT_QUOTES, 'UTF-8'); ?>
+        <!-- existing table + modals markup goes here -->
+        <!-- Login Modal -->
+        <div class="modal fade" id="loginModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <form id="loginForm" autocomplete="off" novalidate>
+                        <input type="text" name="fakeuser" id="fakeuser" autocomplete="off" style="position:absolute;left:-9999px;top:-9999px" aria-hidden="true" tabindex="-1">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Login</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="loginAlert" class="alert alert-danger d-none" role="alert"></div>
+                            <div class="mb-3">
+                                <label class="form-label">Username</label>
+                                <input name="username" type="text" class="form-control" required autofocus autocomplete="off">
                             </div>
-                        </td>
-                        <td class="action-cell text-end">
-                            <div class="row-actions" aria-hidden="true">
-                                <button type="button" class="btn btn-sm btn-outline-primary btn-edit-incident" title="Edit">
-                                    <i class="bi bi-pencil"></i>
-                                </button>
-                                <button type="button" class="btn btn-sm btn-outline-danger btn-delete-incident" title="Delete">
-                                    <i class="bi bi-trash"></i>
-                                </button>
+                            <div class="mb-3">
+                                <label class="form-label">Password</label>
+                                <input name="password" type="password" class="form-control" required autocomplete="new-password">
                             </div>
-                        </td>
-                    </tr>
-                <?php endwhile; ?>
-                </tbody>
-            </table>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" id="loginSubmit" class="btn btn-primary">Sign in</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
         </div>
+
+        <!-- Add Incident Modal -->
+        <div class="modal fade" id="addIncidentModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-lg modal-dialog-centered">
+                <div class="modal-content">
+                    <form id="addIncidentForm" autocomplete="off" novalidate>
+                        <input type="text" name="fakeuser2" autocomplete="off" style="position:absolute;left:-9999px;top:-9999px" aria-hidden="true" tabindex="-1">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Add Incident</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="addIncidentAlert" class="alert alert-danger d-none" role="alert"></div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Report date</label>
+                                    <input name="report_date" type="datetime-local" class="form-control" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Location</label>
+                                    <input name="location" type="text" class="form-control" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Reporter (staff)</label>
+                                    <select name="reporter_id" class="form-select" required>
+                                        <option value="">-- select reporter --</option>
+                                        <?php echo $staffOptions; ?>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Student</label>
+                                    <select name="student_id" class="form-select" required>
+                                        <option value="">-- select student --</option>
+                                        <?php echo $studentOptions; ?>
+                                    </select>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Description</label>
+                                    <textarea name="description" class="form-control" rows="4" required></textarea>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Status</label>
+                                    <select name="status" class="form-select" required>
+                                        <option value="Pending">Pending</option>
+                                        <option value="In Review">In Review</option>
+                                        <option value="Closed">Closed</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" id="addIncidentSubmit" class="btn btn-success">Create Incident</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <?php if ($result->num_rows === 0): ?>
+            <div class="alert alert-info">No incidents found.</div>
+        <?php else: ?>
+            <div class="table-responsive">
+                <table class="table table-striped table-hover table-sm align-middle">
+                    <thead class="table-light small">
+                        <tr>
+                            <th scope="col">#</th>
+                            <th scope="col">Date</th>
+                            <th scope="col">Location</th>
+                            <th scope="col">Reporter</th>
+                            <th scope="col">Student</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Created</th>
+                            <th scope="col">Description</th>
+                            <th class="text-end"> </th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php while ($row = $result->fetch_assoc()):
+                        $id = (int)$row['IncidentID'];
+                    ?>
+                        <tr
+                            data-incident-id="<?php echo $id; ?>"
+                            data-report-date="<?php echo htmlspecialchars($row['ReportDate'], ENT_QUOTES, 'UTF-8'); ?>"
+                            data-location="<?php echo htmlspecialchars($row['Location'], ENT_QUOTES, 'UTF-8'); ?>"
+                            data-reporter-id="<?php echo (int)($row['ReporterStaffID'] ?? 0); ?>"
+                            data-student-id="<?php echo (int)($row['StudentID'] ?? 0); ?>"
+                            data-status="<?php echo htmlspecialchars($row['Status'], ENT_QUOTES, 'UTF-8'); ?>"
+                            data-description="<?php echo htmlspecialchars($row['Description'], ENT_QUOTES, 'UTF-8'); ?>"
+                        >
+                            <td class="fw-semibold"><?php echo $id; ?></td>
+                            <td><?php echo htmlspecialchars($row['ReportDate'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['Location'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['ReporterName'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['StudentName'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['Status'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['CreatedAt'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="max-width:20rem;">
+                                <div class="text-truncate" style="max-width:11.5rem;" title="<?php echo htmlspecialchars($row['Description'], ENT_QUOTES, 'UTF-8'); ?>">
+                                    <?php echo htmlspecialchars($row['Description'], ENT_QUOTES, 'UTF-8'); ?>
+                                </div>
+                            </td>
+                            <td class="action-cell text-end">
+                                <div class="row-actions" aria-hidden="true">
+                                    <button type="button" class="btn btn-sm btn-outline-primary btn-edit-incident" title="Edit">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-outline-danger btn-delete-incident" title="Delete">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    <?php endwhile; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+
+        <!-- Edit Incident Modal -->
+        <div class="modal fade" id="editIncidentModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-lg modal-dialog-centered">
+                <div class="modal-content">
+                    <form id="editIncidentForm" autocomplete="off" novalidate>
+                        <div class="modal-header">
+                            <h5 class="modal-title">Edit Incident</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="editIncidentAlert" class="alert alert-danger d-none" role="alert"></div>
+                            <input type="hidden" name="incident_id" id="edit_incident_id">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Report date</label>
+                                    <input name="report_date" id="edit_report_date" type="datetime-local" class="form-control" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Location</label>
+                                    <input name="location" id="edit_location" type="text" class="form-control" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Reporter (staff)</label>
+                                    <select name="reporter_id" id="edit_reporter_id" class="form-select" required>
+                                        <option value="">-- select reporter --</option>
+                                        <?php echo $staffOptions; ?>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Student</label>
+                                    <select name="student_id" id="edit_student_id" class="form-select" required>
+                                        <option value="">-- select student --</option>
+                                        <?php echo $studentOptions; ?>
+                                    </select>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Description</label>
+                                    <textarea name="description" id="edit_description" class="form-control" rows="4" required></textarea>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Status</label>
+                                    <select name="status" id="edit_status" class="form-select" required>
+                                        <option value="Pending">Pending</option>
+                                        <option value="In Review">In Review</option>
+                                        <option value="Closed">Closed</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" id="editIncidentSubmit" class="btn btn-primary">Save changes</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Delete confirm modal (asks for user's password) -->
+        <div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-sm modal-dialog-centered">
+                <div class="modal-content">
+                    <form id="deleteIncidentForm" autocomplete="off" novalidate>
+                        <div class="modal-header">
+                            <h5 class="modal-title">Confirm Delete</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="deleteIncidentAlert" class="alert alert-danger d-none" role="alert"></div>
+                            <input type="hidden" name="incident_id" id="delete_incident_id">
+                            <p>To delete this incident, confirm your password:</p>
+                            <div class="mb-3">
+                                <input name="password" id="delete_password" type="password" class="form-control" placeholder="Your password" required>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" id="deleteIncidentSubmit" class="btn btn-danger">Delete</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
     <?php endif; ?>
-
-    <!-- Edit Incident Modal -->
-    <div class="modal fade" id="editIncidentModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content">
-                <form id="editIncidentForm" autocomplete="off" novalidate>
-                    <div class="modal-header">
-                        <h5 class="modal-title">Edit Incident</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div id="editIncidentAlert" class="alert alert-danger d-none" role="alert"></div>
-                        <input type="hidden" name="incident_id" id="edit_incident_id">
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <label class="form-label">Report date</label>
-                                <input name="report_date" id="edit_report_date" type="datetime-local" class="form-control" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Location</label>
-                                <input name="location" id="edit_location" type="text" class="form-control" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Reporter (staff)</label>
-                                <select name="reporter_id" id="edit_reporter_id" class="form-select" required>
-                                    <option value="">-- select reporter --</option>
-                                    <?php echo $staffOptions; ?>
-                                </select>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Student</label>
-                                <select name="student_id" id="edit_student_id" class="form-select" required>
-                                    <option value="">-- select student --</option>
-                                    <?php echo $studentOptions; ?>
-                                </select>
-                            </div>
-                            <div class="col-12">
-                                <label class="form-label">Description</label>
-                                <textarea name="description" id="edit_description" class="form-control" rows="4" required></textarea>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">Status</label>
-                                <select name="status" id="edit_status" class="form-select" required>
-                                    <option value="Pending">Pending</option>
-                                    <option value="In Review">In Review</option>
-                                    <option value="Closed">Closed</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" id="editIncidentSubmit" class="btn btn-primary">Save changes</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Delete confirm modal (asks for user's password) -->
-    <div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-sm modal-dialog-centered">
-            <div class="modal-content">
-                <form id="deleteIncidentForm" autocomplete="off" novalidate>
-                    <div class="modal-header">
-                        <h5 class="modal-title">Confirm Delete</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div id="deleteIncidentAlert" class="alert alert-danger d-none" role="alert"></div>
-                        <input type="hidden" name="incident_id" id="delete_incident_id">
-                        <p>To delete this incident, confirm your password:</p>
-                        <div class="mb-3">
-                            <input name="password" id="delete_password" type="password" class="form-control" placeholder="Your password" required>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" id="deleteIncidentSubmit" class="btn btn-danger">Delete</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>

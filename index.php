@@ -27,6 +27,20 @@ session_start();
 // after DB connection is available (or earlier) you can read session user:
 $currentUser = $_SESSION['user'] ?? null;
 
+/**
+ * Simple role-check helper.
+ * Adjust the field name used to store role in session if your app uses a different key.
+ */
+function user_has_role($user, array $roles = []) {
+    if (!$user) return false;
+    // common session keys: 'role', 'Role', 'user_type', 'UserType'
+    $role = $user['role'] ?? $user['Role'] ?? $user['user_type'] ?? $user['UserType'] ?? null;
+    if (!$role) return false;
+    return in_array(strtolower($role), array_map('strtolower', $roles), true);
+}
+
+$canViewRecords = user_has_role($currentUser, ['admin', 'lecturer']);
+
 $sql = "SELECT StudentID, EnrollmentNo, FirstName, LastName, DOB, Gender, Email, Phone, CreatedAt
         FROM student
         ORDER BY LastName, FirstName";
@@ -74,7 +88,9 @@ if ($result === false) {
             <?php endif; ?>
         </div>
     </div>
+
     <h1 class="mb-4">Students</h1>
+
     <!-- Login Modal -->
     <div class="modal fade" id="loginModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
@@ -105,6 +121,7 @@ if ($result === false) {
             </div>
          </div>
      </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
     (function(){
@@ -164,39 +181,47 @@ if ($result === false) {
     })();
     </script>
 
-    <?php if ($result->num_rows === 0): ?>
-        <div class="alert alert-info">No students found.</div>
-    <?php else: ?>
-        <div class="table-responsive">
-            <table class="table table-striped table-bordered align-middle">
-                <thead class="table-dark">
-                    <tr>
-                        <th>#</th>
-                        <th>Enrollment No</th>
-                        <th>Name</th>
-                        <th>DOB</th>
-                        <th>Gender</th>
-                        <th>Email</th>
-                        <th>Phone</th>
-                        <th>Created At</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php while ($row = $result->fetch_assoc()): ?>
-                    <tr>
-                        <td><?php echo (int)$row['StudentID']; ?></td>
-                        <td><?php echo htmlspecialchars($row['EnrollmentNo'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars(trim(($row['FirstName'] ?? '') . ' ' . ($row['LastName'] ?? '')), ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars($row['DOB'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars($row['Gender'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars($row['Email'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars($row['Phone'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars($row['CreatedAt'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                    </tr>
-                <?php endwhile; ?>
-                </tbody>
-            </table>
+    <?php if (! $canViewRecords): ?>
+        <div class="alert alert-info">
+            You must be signed in as a lecturer or administrator to view student records.
         </div>
+    <?php else: ?>
+
+        <?php if ($result->num_rows === 0): ?>
+            <div class="alert alert-info">No students found.</div>
+        <?php else: ?>
+            <div class="table-responsive">
+                <table class="table table-striped table-bordered align-middle">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>#</th>
+                            <th>Enrollment No</th>
+                            <th>Name</th>
+                            <th>DOB</th>
+                            <th>Gender</th>
+                            <th>Email</th>
+                            <th>Phone</th>
+                            <th>Created At</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php while ($row = $result->fetch_assoc()): ?>
+                        <tr>
+                            <td><?php echo (int)$row['StudentID']; ?></td>
+                            <td><?php echo htmlspecialchars($row['EnrollmentNo'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars(trim(($row['FirstName'] ?? '') . ' ' . ($row['LastName'] ?? '')), ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['DOB'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['Gender'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['Email'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['Phone'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['CreatedAt'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                        </tr>
+                    <?php endwhile; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+
     <?php endif; ?>
 
 </div>
