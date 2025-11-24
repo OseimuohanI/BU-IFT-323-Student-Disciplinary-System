@@ -537,9 +537,7 @@ if ($enRes) {
                             <td class="text-end">
                                 <div class="btn-group" role="group" aria-label="Actions">
                                     <!-- view student disciplinary record (opens incidents page filtered) -->
-                                    <a href="incidents.php?student_id=<?php echo $sid; ?>" class="btn btn-sm btn-outline-secondary" title="View records">
-                                        Records
-                                    </a>
+                                    <a href="student_dashboard.php?student_id=<?php echo $sid; ?>" class="btn btn-sm btn-outline-secondary" title="View dashboard">Records</a>
                                     <!-- edit and delete: only visible to authorised users -->
                                     <?php if ($currentUser && $canViewRecords): ?>
                                         <button type="button" class="btn btn-sm btn-outline-primary btn-edit-student" title="Edit">Edit</button>
