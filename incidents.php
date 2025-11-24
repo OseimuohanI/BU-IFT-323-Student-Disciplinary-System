@@ -68,22 +68,78 @@ if ($result === false) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <style>
-    table.table tbody tr { position: relative; }
-    .row-actions {
-        position: absolute;
-        right: 0.6rem;
-        top: 50%;
-        transform: translateY(-50%) translateX(110%);
-        transition: transform 180ms ease;
-        display: flex;
-        gap: .35rem;
-        z-index: 3;
-        pointer-events: auto;
-    }
-    table.table tbody tr:hover .row-actions {
-        transform: translateY(-50%) translateX(0);
-    }
-    td.action-cell { width: 5.5rem; padding-right: 5rem; }
+        /* Header: dark bar with white bold text */
+        table.table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+
+        table.table thead th {
+            background: #222427;          /* dark header color */
+            color: #ffffff;               /* white text */
+            font-weight: 700;
+            padding: 0.6rem 1rem;
+            vertical-align: middle;
+            border: 0;                    /* remove default border */
+            border-right: 1px solid rgba(255,255,255,0.05); /* subtle divider between headings */
+            white-space: nowrap;
+        }
+
+        /* Make header row visually taller like your example */
+        table.table thead th:first-child { padding-left: 0.75rem; }
+        table.table thead th { height: 2.5rem; }
+
+        /* Body rows */
+        table.table tbody td {
+            background: #ffffff;
+            padding: 0.45rem 0.5rem;
+            vertical-align: middle;
+            border-top: 1px solid #e9ecef; /* subtle row separators */
+            color: #222;
+        }
+
+        /* Keep bootstrap striped look but slightly lighter */
+        table.table.table-striped > tbody > tr:nth-of-type(odd) > td {
+            background-color: #f7f7f7;
+        }
+
+        /* Description column: clip overflow and show ellipsis */
+        td.desc-cell {
+            max-width: 20rem;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+
+        /* Small gap between ID and Date columns */
+        table.table thead th:nth-child(2),
+        table.table tbody td:nth-child(2) {
+            padding-left: 1.25rem;
+        }
+
+        /* Action cell keep aligned to right */
+        td.action-cell { width: 5.5rem; padding-right: 1rem; }
+
+        /* Slide-in buttons (kept from previous) */
+        table.table tbody tr { position: relative; }
+        .row-actions {
+            position: absolute;
+            right: 0.6rem;
+            top: 50%;
+            transform: translateY(-50%) translateX(110%);
+            transition: transform 180ms ease;
+            display: flex;
+            gap: .35rem;
+            z-index: 3;
+            pointer-events: auto;
+        }
+        table.table tbody tr:hover .row-actions {
+            transform: translateY(-50%) translateX(0);
+        }
+
+        /* Make header text a bit smaller and uppercase if desired */
+        table.table thead th { text-transform: none; font-size: 0.95rem; }
     </style>
 </head>
 <body class="bg-light">
@@ -247,8 +303,8 @@ if ($result === false) {
                         <td><?php echo htmlspecialchars($row['StudentName'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($row['Status'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($row['CreatedAt'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td style="max-width:32rem;">
-                            <div class="text-truncate" style="max-width:32rem;" title="<?php echo htmlspecialchars($row['Description'], ENT_QUOTES, 'UTF-8'); ?>">
+                        <td style="max-width:20rem;">
+                            <div class="text-truncate" style="max-width:11.5rem;" title="<?php echo htmlspecialchars($row['Description'], ENT_QUOTES, 'UTF-8'); ?>">
                                 <?php echo htmlspecialchars($row['Description'], ENT_QUOTES, 'UTF-8'); ?>
                             </div>
                         </td>
