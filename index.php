@@ -204,6 +204,89 @@ if ($enRes) {
         </div>
     </div>
 
+    <!-- Edit Student Modal -->
+    <div class="modal fade" id="editStudentModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <form id="editStudentForm" autocomplete="off" novalidate>
+                    <div class="modal-header">
+                        <h5 class="modal-title">Edit Student</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="editStudentAlert" class="alert alert-danger d-none" role="alert"></div>
+                        <input type="hidden" name="student_id" id="edit_student_id">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Enrollment No</label>
+                                <input name="enrollment_no" id="edit_enrollment_no" type="text" class="form-control" readonly>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">First name</label>
+                                <input name="first_name" id="edit_first_name" type="text" class="form-control" required>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Last name</label>
+                                <input name="last_name" id="edit_last_name" type="text" class="form-control" required>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">DOB</label>
+                                <input name="dob" id="edit_dob" type="date" class="form-control">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Gender</label>
+                                <select name="gender" id="edit_gender" class="form-select">
+                                    <option value="">-- select --</option>
+                                    <option value="Male">Male</option>
+                                    <option value="Female">Female</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Phone</label>
+                                <input name="phone" id="edit_phone" type="text" class="form-control">
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label">Email</label>
+                                <input name="email" id="edit_email" type="email" class="form-control">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" id="editStudentSubmit" class="btn btn-primary">Save changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Student Modal -->
+    <div class="modal fade" id="deleteStudentModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-sm modal-dialog-centered">
+            <div class="modal-content">
+                <form id="deleteStudentForm" autocomplete="off" novalidate>
+                    <div class="modal-header">
+                        <h5 class="modal-title">Confirm Delete</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="deleteStudentAlert" class="alert alert-danger d-none" role="alert"></div>
+                        <input type="hidden" name="student_id" id="delete_student_id">
+                        <p>To delete this student, confirm your password:</p>
+                        <div class="mb-3">
+                            <input name="password" id="delete_student_password" type="password" class="form-control" placeholder="Your password" required>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" id="deleteStudentSubmit" class="btn btn-danger">Delete</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
     (function(){
@@ -299,6 +382,109 @@ if ($enRes) {
             });
         }
 
+        // delegation for edit/delete buttons
+        document.addEventListener('click', function(e){
+            const editBtn = e.target.closest('.btn-edit-student');
+            if (editBtn) {
+                const tr = editBtn.closest('tr');
+                if (!tr) return;
+                const id = tr.dataset.studentId || '';
+                document.getElementById('edit_student_id').value = id;
+                document.getElementById('edit_enrollment_no').value = tr.dataset.enrollment || '';
+                document.getElementById('edit_first_name').value = tr.dataset.first || '';
+                document.getElementById('edit_last_name').value = tr.dataset.last || '';
+                document.getElementById('edit_dob').value = tr.dataset.dob || '';
+                document.getElementById('edit_gender').value = tr.dataset.gender || '';
+                document.getElementById('edit_email').value = tr.dataset.email || '';
+                document.getElementById('edit_phone').value = tr.dataset.phone || '';
+                document.getElementById('editStudentAlert').classList.add('d-none');
+                new bootstrap.Modal(document.getElementById('editStudentModal')).show();
+                return;
+            }
+
+            const delBtn = e.target.closest('.btn-delete-student');
+            if (delBtn) {
+                const tr = delBtn.closest('tr');
+                if (!tr) return;
+                document.getElementById('delete_student_id').value = tr.dataset.studentId || '';
+                document.getElementById('delete_student_password').value = '';
+                document.getElementById('deleteStudentAlert').classList.add('d-none');
+                new bootstrap.Modal(document.getElementById('deleteStudentModal')).show();
+                return;
+            }
+        });
+
+        // submit edit
+        const editForm = document.getElementById('editStudentForm');
+        if (editForm) {
+            editForm.addEventListener('submit', async function(e){
+                e.preventDefault();
+                const alertBox = document.getElementById('editStudentAlert');
+                const btn = document.getElementById('editStudentSubmit');
+                alertBox.classList.add('d-none'); alertBox.textContent = '';
+                btn.disabled = true;
+                const payload = {
+                    student_id: parseInt(document.getElementById('edit_student_id').value || 0, 10),
+                    enrollment_no: document.getElementById('edit_enrollment_no').value || '',
+                    first_name: document.getElementById('edit_first_name').value.trim(),
+                    last_name: document.getElementById('edit_last_name').value.trim(),
+                    dob: document.getElementById('edit_dob').value || '',
+                    gender: document.getElementById('edit_gender').value || '',
+                    phone: document.getElementById('edit_phone').value.trim(),
+                    email: document.getElementById('edit_email').value.trim()
+                };
+                try {
+                    const res = await fetch('student_update.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                        cache: 'no-store'
+                    });
+                    const text = await res.text();
+                    let json;
+                    try { json = JSON.parse(text); } catch (err) { throw new Error('Server returned invalid JSON'); }
+                    if (!json.success) throw new Error(json.message || 'Unable to save');
+                    new bootstrap.Modal(document.getElementById('editStudentModal')).hide();
+                    location.reload();
+                } catch (err) {
+                    alertBox.textContent = err.message || 'Network error';
+                    alertBox.classList.remove('d-none');
+                } finally { btn.disabled = false; }
+            });
+        }
+
+        // submit delete
+        const delForm = document.getElementById('deleteStudentForm');
+        if (delForm) {
+            delForm.addEventListener('submit', async function(e){
+                e.preventDefault();
+                const alertBox = document.getElementById('deleteStudentAlert');
+                const btn = document.getElementById('deleteStudentSubmit');
+                alertBox.classList.add('d-none'); alertBox.textContent = '';
+                btn.disabled = true;
+                const payload = {
+                    student_id: parseInt(document.getElementById('delete_student_id').value || 0, 10),
+                    password: document.getElementById('delete_student_password').value || ''
+                };
+                try {
+                    const res = await fetch('student_delete.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                        cache: 'no-store'
+                    });
+                    const text = await res.text();
+                    let json;
+                    try { json = JSON.parse(text); } catch (err) { throw new Error('Server returned invalid JSON'); }
+                    if (!json.success) throw new Error(json.message || 'Unable to delete');
+                    new bootstrap.Modal(document.getElementById('deleteStudentModal')).hide();
+                    location.reload();
+                } catch (err) {
+                    alertBox.textContent = err.message || 'Network error';
+                    alertBox.classList.remove('d-none');
+                } finally { btn.disabled = false; }
+            });
+        }
     })();
     </script>
 
@@ -323,12 +509,24 @@ if ($enRes) {
                             <th>Email</th>
                             <th>Phone</th>
                             <th>Created At</th>
+                            <th class="text-end"> </th> <!-- actions -->
                         </tr>
                     </thead>
                     <tbody>
-                    <?php while ($row = $result->fetch_assoc()): ?>
-                        <tr>
-                            <td><?php echo (int)$row['StudentID']; ?></td>
+                    <?php while ($row = $result->fetch_assoc()):
+                        $sid = (int)$row['StudentID'];
+                    ?>
+                        <tr
+                            data-student-id="<?php echo $sid; ?>"
+                            data-enrollment="<?php echo htmlspecialchars($row['EnrollmentNo'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                            data-first="<?php echo htmlspecialchars($row['FirstName'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                            data-last="<?php echo htmlspecialchars($row['LastName'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                            data-dob="<?php echo htmlspecialchars($row['DOB'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                            data-gender="<?php echo htmlspecialchars($row['Gender'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                            data-email="<?php echo htmlspecialchars($row['Email'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                            data-phone="<?php echo htmlspecialchars($row['Phone'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                        >
+                            <td><?php echo $sid; ?></td>
                             <td><?php echo htmlspecialchars($row['EnrollmentNo'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars(trim(($row['FirstName'] ?? '') . ' ' . ($row['LastName'] ?? '')), ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars($row['DOB'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
@@ -336,12 +534,25 @@ if ($enRes) {
                             <td><?php echo htmlspecialchars($row['Email'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars($row['Phone'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars($row['CreatedAt'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td class="text-end">
+                                <div class="btn-group" role="group" aria-label="Actions">
+                                    <!-- view student disciplinary record (opens incidents page filtered) -->
+                                    <a href="incidents.php?student_id=<?php echo $sid; ?>" class="btn btn-sm btn-outline-secondary" title="View records">
+                                        Records
+                                    </a>
+                                    <!-- edit and delete: only visible to authorised users -->
+                                    <?php if ($currentUser && $canViewRecords): ?>
+                                        <button type="button" class="btn btn-sm btn-outline-primary btn-edit-student" title="Edit">Edit</button>
+                                        <button type="button" class="btn btn-sm btn-outline-danger btn-delete-student" title="Delete">Delete</button>
+                                    <?php endif; ?>
+                                </div>
+                            </td>
                         </tr>
                     <?php endwhile; ?>
                     </tbody>
                 </table>
-            </div>
-        <?php endif; ?>
+             </div>
+         <?php endif; ?>
 
     <?php endif; ?>
 
