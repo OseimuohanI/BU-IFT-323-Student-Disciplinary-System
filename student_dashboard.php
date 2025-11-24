@@ -79,14 +79,15 @@ $stmt->close();
 if (!$profile) { http_response_code(404); echo 'Student not found'; exit; }
 
 // --- Detect case/incident-like table ---
-$candidateTables = ['incidents','incident','cases','student_cases','disciplinary_cases','offences','offenses','complaints','reports'];
+// (ensure incidentreport is checked first)
+$candidateTables = ['incidentreport','incidents','incident','cases','student_cases','disciplinary_cases','offences','offenses','complaints','reports'];
 $foundTable = null;
 foreach ($candidateTables as $t) {
     $res = $mysqli->query("SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$mysqli->real_escape_string($t)}' LIMIT 1");
     if ($res && $res->num_rows) { $foundTable = $t; $res->free(); break; }
     if ($res) $res->free();
 }
-// also try fuzzy search if nothing matched
+// fuzzy fallback
 if (!$foundTable) {
     $res = $mysqli->query("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE()");
     if ($res) {
@@ -109,14 +110,15 @@ if ($foundTable) {
         while ($r = $cRes->fetch_assoc()) $caseCols[] = $r['COLUMN_NAME'];
         $cRes->free();
     }
-    // typical mappings
-    $caseColMap['id'] = pick_col($caseCols, ['IncidentID','IncidentId','id','CaseID','CaseId']);
-    $caseColMap['student_fk'] = pick_col($caseCols, ['StudentID','student_id','studentid','MatricID','EnrollmentNo']);
-    $caseColMap['report_date'] = pick_col($caseCols, ['ReportDate','report_date','date_reported','ReportedAt','created_at']);
-    $caseColMap['offense'] = pick_col($caseCols, ['Offense','Title','Offence','OffenceTitle','OffenseTitle','description','Description']);
+    // typical mappings (include Description / ReportText candidates)
+    $caseColMap['id'] = pick_col($caseCols, ['IncidentID','IncidentId','id','CaseID','CaseId','ReportID','ReportId']);
+    $caseColMap['student_fk'] = pick_col($caseCols, ['StudentID','student_id','studentid','MatricID','EnrollmentNo','MatricNo']);
+    $caseColMap['report_date'] = pick_col($caseCols, ['ReportDate','report_date','date_reported','ReportedAt','created_at','ReportDateTime']);
+    $caseColMap['offense'] = pick_col($caseCols, ['Offense','Title','Offence','OffenceTitle','OffenseTitle','Description','description','OffenceDesc','OffenceDescription']);
+    $caseColMap['description'] = pick_col($caseCols, ['Description','description','Details','Narrative','ReportText','ReportDetails','Desc']);
     $caseColMap['severity'] = pick_col($caseCols, ['Severity','Level','CaseLevel','SeverityLevel']);
     $caseColMap['status'] = pick_col($caseCols, ['Status','status','CaseStatus','case_status']);
-    $caseColMap['next_action'] = pick_col($caseCols, ['NextAction','next_action','RequiredAction','Action']);
+    $caseColMap['next_action'] = pick_col($caseCols, ['NextAction','next_action','RequiredAction','Action','NextStep']);
     $caseColMap['deadline'] = pick_col($caseCols, ['Deadline','deadline','due_date','action_deadline','DueDate']);
     $caseColMap['resolved_date'] = pick_col($caseCols, ['ResolvedAt','resolved_at','DateResolved','resolved_date']);
     $caseColMap['decision'] = pick_col($caseCols, ['Decision','Outcome','Result','DecisionMade']);
@@ -124,7 +126,7 @@ if ($foundTable) {
     $caseColMap['assigned'] = pick_col($caseCols, ['AssignedTo','StaffID','Officer','Investigator']);
 }
 
-// --- Gather metrics ---
+// --- Gather metrics (active cases cross-referenced by StudentID, show descriptions) ---
 $totalIncidents = 0;
 $openCount = 0;
 $resolvedCount = 0;
@@ -135,60 +137,73 @@ $sanctionsList = [];
 
 if ($foundTable && $caseColMap['student_fk']) {
     $fk = $caseColMap['student_fk'];
-    // count total
-    $sql = "SELECT COUNT(*) FROM `{$foundTable}` WHERE `{$fk}` = ?";
-    $stmt = $mysqli->prepare($sql); $stmt->bind_param('s', $profile[$fk] ?? $studentId); $stmt->execute(); $stmt->bind_result($totalIncidents); $stmt->fetch(); $stmt->close();
+    $fkValue = $profile[$fk] ?? $studentId; // try profile FK value (EnrollmentNo etc) else StudentID
 
-    // status distribution (if status column exists)
+    // total count
+    $sql = "SELECT COUNT(*) FROM `{$foundTable}` WHERE `{$fk}` = ?";
+    $stmt = $mysqli->prepare($sql);
+    $stmt->bind_param('s', $fkValue);
+    $stmt->execute(); $stmt->bind_result($totalIncidents); $stmt->fetch(); $stmt->close();
+
+    // status distribution
     if ($caseColMap['status']) {
         $sql = "SELECT `{$caseColMap['status']}` AS st, COUNT(*) AS cnt FROM `{$foundTable}` WHERE `{$fk}` = ? GROUP BY `{$caseColMap['status']}`";
-        $stmt = $mysqli->prepare($sql); $stmt->bind_param('s', $profile[$fk] ?? $studentId); $stmt->execute(); $res = $stmt->get_result();
+        $stmt = $mysqli->prepare($sql);
+        $stmt->bind_param('s', $fkValue);
+        $stmt->execute();
+        $res = $stmt->get_result();
         while ($r = $res->fetch_assoc()) { $statusDistribution[$r['st'] ?? 'Unknown'] = (int)$r['cnt']; }
         $stmt->close();
-        // count open vs resolved using heuristics
+
         $openStatuses = ['Pending','Pending Review','Under Investigation','Hearing Scheduled','Open','Ongoing','In Progress'];
-        $resolvedStatuses = ['Resolved','Closed','Decided','Resolved','Finalized','Completed'];
+        $resolvedStatuses = ['Resolved','Closed','Decided','Finalized','Completed'];
         foreach ($statusDistribution as $sname => $ct) {
             if (in_array($sname, $openStatuses, true)) $openCount += $ct;
             elseif (in_array($sname, $resolvedStatuses, true)) $resolvedCount += $ct;
-            else { /* leave for severity gauge */ }
         }
     }
 
-    // fallback: compute resolved by presence of resolved_date column
+    // fallback resolved by resolved_date column
     if ($caseColMap['resolved_date']) {
         $sql = "SELECT COUNT(*) FROM `{$foundTable}` WHERE `{$fk}` = ? AND `{$caseColMap['resolved_date']}` IS NOT NULL AND `{$caseColMap['resolved_date']}` <> ''";
-        $stmt = $mysqli->prepare($sql); $stmt->bind_param('s', $profile[$fk] ?? $studentId); $stmt->execute(); $stmt->bind_result($resolvedCount); $stmt->fetch(); $stmt->close();
-        // open = total - resolved
+        $stmt = $mysqli->prepare($sql);
+        $stmt->bind_param('s', $fkValue);
+        $stmt->execute(); $stmt->bind_result($resolvedCount); $stmt->fetch(); $stmt->close();
         $openCount = max(0, $totalIncidents - $resolvedCount);
     }
 
-    // recent open cases
-    $cols = [];
-    foreach (['id','report_date','offense','severity','status','next_action','deadline'] as $k) {
-        if (!empty($caseColMap[$k])) $cols[] = "`{$caseColMap[$k]}`";
+    // Recent open cases: explicitly include description column if present
+    $selectCols = [];
+    foreach (['id','report_date','offense','description','severity','status','next_action','deadline'] as $k) {
+        if (!empty($caseColMap[$k])) $selectCols[] = "`{$caseColMap[$k]}`";
     }
-    $cols = $cols ?: ['*'];
-    $sql = "SELECT " . implode(',', $cols) . " FROM `{$foundTable}` WHERE `{$fk}` = ? ";
+    if (empty($selectCols)) $selectCols = ['*'];
+    $sql = "SELECT " . implode(',', $selectCols) . " FROM `{$foundTable}` WHERE `{$fk}` = ? ";
     if ($caseColMap['status']) $sql .= " AND `{$caseColMap['status']}` NOT IN ('Closed','Resolved','Decided','Finalized','Completed') ";
-    $sql .= " ORDER BY " . ($caseColMap['report_date'] ?? $caseColMap['id'] ?? '1') . " DESC LIMIT 10";
-    $stmt = $mysqli->prepare($sql); $stmt->bind_param('s', $profile[$fk] ?? $studentId); $stmt->execute(); $recentOpen = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
+    $sql .= " ORDER BY " . ($caseColMap['report_date'] ?? $caseColMap['id'] ?? '1') . " DESC LIMIT 20";
+    $stmt = $mysqli->prepare($sql);
+    $stmt->bind_param('s', $fkValue);
+    $stmt->execute(); $recentOpen = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
 
-    // recent resolved
+    // Recent resolved cases (include description)
     if ($caseColMap['resolved_date']) {
-        $cols = [];
-        foreach (['id','report_date','offense','severity','status','resolved_date','decision','sanctions'] as $k) {
-            if (!empty($caseColMap[$k])) $cols[] = "`{$caseColMap[$k]}`";
+        $selectCols = [];
+        foreach (['id','report_date','offense','description','severity','status','resolved_date','decision','sanctions'] as $k) {
+            if (!empty($caseColMap[$k])) $selectCols[] = "`{$caseColMap[$k]}`";
         }
-        $cols = $cols ?: ['*'];
-        $sql = "SELECT " . implode(',', $cols) . " FROM `{$foundTable}` WHERE `{$fk}` = ? AND `{$caseColMap['resolved_date']}` IS NOT NULL AND `{$caseColMap['resolved_date']}` <> '' ORDER BY `{$caseColMap['resolved_date']}` DESC LIMIT 12";
-        $stmt = $mysqli->prepare($sql); $stmt->bind_param('s', $profile[$fk] ?? $studentId); $stmt->execute(); $recentResolved = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
+        if (empty($selectCols)) $selectCols = ['*'];
+        $sql = "SELECT " . implode(',', $selectCols) . " FROM `{$foundTable}` WHERE `{$fk}` = ? AND `{$caseColMap['resolved_date']}` IS NOT NULL AND `{$caseColMap['resolved_date']}` <> '' ORDER BY `{$caseColMap['resolved_date']}` DESC LIMIT 20";
+        $stmt = $mysqli->prepare($sql);
+        $stmt->bind_param('s', $fkValue);
+        $stmt->execute(); $recentResolved = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
     }
 
-    // sanctions list if field present
+    // sanctions list
     if ($caseColMap['sanctions']) {
         $sql = "SELECT `{$caseColMap['id']}` AS id, `{$caseColMap['offense']}` AS offense, `{$caseColMap['sanctions']}` AS sanction, `{$caseColMap['status']}` AS status FROM `{$foundTable}` WHERE `{$fk}` = ? AND `{$caseColMap['sanctions']}` IS NOT NULL LIMIT 20";
-        $stmt = $mysqli->prepare($sql); $stmt->bind_param('s', $profile[$fk] ?? $studentId); $stmt->execute(); $sanctionsList = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
+        $stmt = $mysqli->prepare($sql);
+        $stmt->bind_param('s', $fkValue);
+        $stmt->execute(); $sanctionsList = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
     }
 }
 
@@ -422,3 +437,19 @@ if (!empty($recentOpen)) {
 </script>
 </body>
 </html>
+
+<?php
+// Debug panel: set true to show detection results
+$DEBUG = true;
+
+if ($DEBUG) {
+    $debugInfo = [
+        'foundTable' => $foundTable,
+        'caseColsDetected' => $caseCols,
+        'caseColMap' => $caseColMap,
+        'studentColsDetected' => $studentCols,
+        'studentProfileSample' => $profile,
+    ];
+    // render simple debug block (will appear above dashboard content)
+    echo '<div class="container py-3"><div class="alert alert-warning"><strong>Debug info</strong><pre style="white-space:pre-wrap;">' . htmlspecialchars(print_r($debugInfo, true), ENT_QUOTES, 'UTF-8') . '</pre></div></div>';
+}
