@@ -54,20 +54,87 @@ if ($mysqli instanceof mysqli) {
     }
 }
 
+// --- SEARCH: handle q (query) and field (all|student|reporter|location|status|description) ---
+$searchTerm  = trim((string)($_GET['q'] ?? ''));
+$searchField = ($_GET['field'] ?? 'all');
+
+$where = [];
+$params = [];
+$types = '';
+
+if ($searchTerm !== '') {
+    $like = '%' . $searchTerm . '%';
+    switch ($searchField) {
+        case 'student':
+            // search student name or enrollment
+            $where[] = "(CONCAT(COALESCE(st.FirstName,''),' ',COALESCE(st.LastName,'')) LIKE ? OR COALESCE(st.EnrollmentNo,'') LIKE ?)";
+            $types .= 'ss'; $params[] = $like; $params[] = $like;
+            break;
+        case 'reporter':
+            $where[] = "COALESCE(s.Name,'') LIKE ?";
+            $types .= 's'; $params[] = $like;
+            break;
+        case 'location':
+            $where[] = "COALESCE(i.Location,'') LIKE ?";
+            $types .= 's'; $params[] = $like;
+            break;
+        case 'status':
+            $where[] = "COALESCE(i.Status,'') LIKE ?";
+            $types .= 's'; $params[] = $like;
+            break;
+        case 'description':
+            $where[] = "COALESCE(i.Description,'') LIKE ?";
+            $types .= 's'; $params[] = $like;
+            break;
+        default:
+            // all: student, reporter, location, status, description
+            $where[] = "(
+                CONCAT(COALESCE(st.FirstName,''),' ',COALESCE(st.LastName,'')) LIKE ? OR
+                COALESCE(st.EnrollmentNo,'') LIKE ? OR
+                COALESCE(s.Name,'') LIKE ? OR
+                COALESCE(i.Location,'') LIKE ? OR
+                COALESCE(i.Status,'') LIKE ? OR
+                COALESCE(i.Description,'') LIKE ?
+            )";
+            $types .= 'ssssss';
+            $params[] = $like; $params[] = $like; $params[] = $like; $params[] = $like; $params[] = $like; $params[] = $like;
+            break;
+    }
+}
+
+// Build base SQL (same joins as before)
 $sql = "SELECT i.IncidentID, i.ReportDate, i.Location, i.Description, i.Status, i.CreatedAt,
                s.StaffID AS ReporterStaffID, s.Name AS ReporterName,
                st.StudentID AS StudentID, CONCAT(st.FirstName, ' ', st.LastName) AS StudentName
         FROM incidentreport i
         LEFT JOIN staff s ON i.ReporterStaffID = s.StaffID
-        LEFT JOIN student st ON i.StudentID = st.StudentID
-        ORDER BY i.ReportDate DESC, i.IncidentID DESC";
+        LEFT JOIN student st ON i.StudentID = st.StudentID";
 
-$result = $mysqli->query($sql);
-if ($result === false) {
+if (!empty($where)) {
+    $sql .= " WHERE " . implode(' AND ', $where);
+}
+
+$sql .= " ORDER BY i.ReportDate DESC, i.IncidentID DESC";
+
+$stmt = $mysqli->prepare($sql);
+if ($stmt === false) {
     http_response_code(500);
-    echo 'Query error: ' . htmlspecialchars($mysqli->error, ENT_QUOTES, 'UTF-8');
+    echo 'Query prepare failed: ' . htmlspecialchars($mysqli->error, ENT_QUOTES, 'UTF-8');
     exit;
 }
+
+if (!empty($params)) {
+    // bind params (references)
+    $bind = [];
+    $bind[] = $types;
+    for ($i = 0; $i < count($params); $i++) {
+        $bind[] = &$params[$i];
+    }
+    call_user_func_array([$stmt, 'bind_param'], $bind);
+}
+
+$stmt->execute();
+$result = $stmt->get_result();
 ?>
 <!doctype html>
 <html lang="en">
@@ -179,6 +246,27 @@ if ($result === false) {
             <?php endif; ?>
         </div>
     </div>
+
+    <!-- Search bar -->
+    <form class="row g-2 mb-3" method="get" action="incidents.php" role="search">
+        <div class="col-auto">
+            <select name="field" class="form-select">
+                <option value="all" <?php echo ($searchField === 'all') ? 'selected' : ''; ?>>All</option>
+                <option value="student" <?php echo ($searchField === 'student') ? 'selected' : ''; ?>>Student</option>
+                <option value="reporter" <?php echo ($searchField === 'reporter') ? 'selected' : ''; ?>>Reporter</option>
+                <option value="location" <?php echo ($searchField === 'location') ? 'selected' : ''; ?>>Location</option>
+                <option value="status" <?php echo ($searchField === 'status') ? 'selected' : ''; ?>>Status</option>
+                <option value="description" <?php echo ($searchField === 'description') ? 'selected' : ''; ?>>Description</option>
+            </select>
+        </div>
+        <div class="col">
+            <input name="q" value="<?php echo htmlspecialchars($searchTerm ?? '', ENT_QUOTES, 'UTF-8'); ?>" class="form-control" type="search" placeholder="Search incidents (press Enter)" aria-label="Search incidents">
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-outline-primary" type="submit">Search</button>
+            <a href="incidents.php" class="btn btn-outline-secondary">Reset</a>
+        </div>
+    </form>
 
     <div class="d-flex align-items-center justify-content-between mb-3">
         <h1 class="mb-0">Incidents</h1>

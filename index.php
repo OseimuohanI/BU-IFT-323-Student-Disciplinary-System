@@ -44,6 +44,9 @@ function user_has_role($user, array $roles = []) {
 
 $canViewRecords = user_has_role($currentUser, ['admin', 'lecturer']);
 
+// NEW: convenience flag for lecturer role
+$isLecturer = user_has_role($currentUser, ['lecturer']);
+
 $sql = "SELECT StudentID, EnrollmentNo, FirstName, LastName, DOB, Gender, Email, Phone, CreatedAt
         FROM student
         ORDER BY LastName, FirstName";
@@ -65,6 +68,67 @@ if ($enRes) {
     $nextEnrollment = 'EN' . str_pad($num, 5, '0', STR_PAD_LEFT);
     $enRes->free();
 }
+
+// NEW: search handling (q = query, field = all|name|enrollment|email|phone)
+$searchTerm = trim((string)($_GET['q'] ?? ''));
+$searchField = ($_GET['field'] ?? 'all');
+
+$where = [];
+$params = [];
+$types = '';
+
+if ($searchTerm !== '') {
+    $like = '%' . $searchTerm . '%';
+    switch ($searchField) {
+        case 'enrollment':
+            $where[] = "EnrollmentNo LIKE ?";
+            $types .= 's'; $params[] = $like;
+            break;
+        case 'email':
+            $where[] = "Email LIKE ?";
+            $types .= 's'; $params[] = $like;
+            break;
+        case 'phone':
+            $where[] = "Phone LIKE ?";
+            $types .= 's'; $params[] = $like;
+            break;
+        case 'name':
+            // search first/last and full name
+            $where[] = "(FirstName LIKE ? OR LastName LIKE ? OR CONCAT(FirstName,' ',LastName) LIKE ?)";
+            $types .= 'sss'; $params[] = $like; $params[] = $like; $params[] = $like;
+            break;
+        default:
+            // all fields
+            $where[] = "(EnrollmentNo LIKE ? OR FirstName LIKE ? OR LastName LIKE ? OR Email LIKE ? OR Phone LIKE ?)";
+            $types .= 'sssss';
+            $params[] = $like; $params[] = $like; $params[] = $like; $params[] = $like; $params[] = $like;
+            break;
+    }
+}
+
+$baseSql = "SELECT StudentID, EnrollmentNo, FirstName, LastName, DOB, Gender, Email, Phone, CreatedAt FROM student";
+if (!empty($where)) {
+    $baseSql .= " WHERE " . implode(' AND ', $where);
+}
+$baseSql .= " ORDER BY LastName, FirstName";
+
+$stmt = $mysqli->prepare($baseSql);
+if ($stmt === false) {
+    http_response_code(500);
+    echo 'Query prepare failed: ' . htmlspecialchars($mysqli->error);
+    exit;
+}
+if (!empty($params)) {
+    // bind params (references required)
+    $bindNames = [];
+    $bindNames[] = $types;
+    for ($i = 0; $i < count($params); $i++) {
+        $bindNames[] = &$params[$i];
+    }
+    call_user_func_array([$stmt, 'bind_param'], $bindNames);
+}
+$stmt->execute();
+$result = $stmt->get_result();
 ?>
 <!doctype html>
 <html lang="en">
@@ -86,7 +150,13 @@ if ($enRes) {
                 <div class="d-flex align-items-center justify-content-end gap-2">
                     <div class="me-3 text-end">
                         <div class="small text-muted">Hello</div>
-                        <div><strong><?php echo htmlspecialchars($currentUser['FullName'] ?? $currentUser['Username'], ENT_QUOTES, 'UTF-8'); ?></strong></div>
+                        <div>
+                            <?php if ($isLecturer): ?>
+                                <a href="lecturer_dashboard.php"><strong><?php echo htmlspecialchars($currentUser['FullName'] ?? $currentUser['Username'], ENT_QUOTES, 'UTF-8'); ?></strong></a>
+                            <?php else: ?>
+                                <strong><?php echo htmlspecialchars($currentUser['FullName'] ?? $currentUser['Username'], ENT_QUOTES, 'UTF-8'); ?></strong>
+                            <?php endif; ?>
+                        </div>
                     </div>
                     <div class="btn-group me-2" role="group" aria-label="Navigation">
                         <?php
@@ -105,6 +175,26 @@ if ($enRes) {
             <?php endif; ?>
         </div>
     </div>
+
+    <!-- Search bar -->
+    <form class="row g-2 mb-3" method="get" action="index.php" role="search">
+        <div class="col-auto">
+            <select name="field" class="form-select">
+                <option value="all" <?php echo ($searchField === 'all') ? 'selected' : ''; ?>>All</option>
+                <option value="name" <?php echo ($searchField === 'name') ? 'selected' : ''; ?>>Name</option>
+                <option value="enrollment" <?php echo ($searchField === 'enrollment') ? 'selected' : ''; ?>>Enrollment No</option>
+                <option value="email" <?php echo ($searchField === 'email') ? 'selected' : ''; ?>>Email</option>
+                <option value="phone" <?php echo ($searchField === 'phone') ? 'selected' : ''; ?>>Phone</option>
+            </select>
+        </div>
+        <div class="col">
+            <input name="q" value="<?php echo htmlspecialchars($searchTerm ?? '', ENT_QUOTES, 'UTF-8'); ?>" class="form-control" type="search" placeholder="Search students (press Enter)" aria-label="Search">
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-outline-primary" type="submit">Search</button>
+            <a href="index.php" class="btn btn-outline-secondary">Reset</a>
+        </div>
+    </form>
 
     <?php if ($currentUser && $canViewRecords): ?>
         <div class="d-flex align-items-center justify-content-between mb-3">

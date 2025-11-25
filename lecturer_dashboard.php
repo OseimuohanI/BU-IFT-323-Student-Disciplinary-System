@@ -69,30 +69,147 @@ $col_report_date = pick_col($cols, ['ReportDate','report_date','date_reported','
 $col_sanctions = pick_col($cols, ['Sanctions','sanctions','Penalty','penalties']);
 
 // query open cases (heuristic)
-// --- REPLACED BLOCK: build SELECT without risking a trailing comma causing SQL syntax errors ---
+// --- REPLACED BLOCK: qualify case table columns with alias to avoid ambiguous column errors ---
+$ftAlias = 'c'; // alias for the found case table
+
 $selectCols = [];
-if ($col_id) $selectCols[] = "`{$col_id}` AS id";
-if ($col_student) $selectCols[] = "`{$col_student}` AS student";
-if ($col_report_date) $selectCols[] = "`{$col_report_date}` AS reported";
-if ($col_severity) $selectCols[] = "`{$col_severity}` AS severity";
-if ($col_status) $selectCols[] = "`{$col_status}` AS status";
-if ($col_desc) $selectCols[] = "`{$col_desc}` AS description";
-if ($col_sanctions) $selectCols[] = "`{$col_sanctions}` AS sanctions";
+if ($col_id)         $selectCols[] = "`{$ftAlias}`.`{$col_id}` AS id";
+if ($col_student)    $selectCols[] = "`{$ftAlias}`.`{$col_student}` AS student";
+if ($col_report_date)$selectCols[] = "`{$ftAlias}`.`{$col_report_date}` AS reported";
+if ($col_severity)   $selectCols[] = "`{$ftAlias}`.`{$col_severity}` AS severity";
+if ($col_status)     $selectCols[] = "`{$ftAlias}`.`{$col_status}` AS status";
+if ($col_desc)       $selectCols[] = "`{$ftAlias}`.`{$col_desc}` AS description";
+if ($col_sanctions)  $selectCols[] = "`{$ftAlias}`.`{$col_sanctions}` AS sanctions";
 
-$selectSql = count($selectCols) ? implode(', ', $selectCols) : '*';
+// Try to join student table to get a readable name.
+// Heuristic: if case table student column looks like an id, join on student.StudentID,
+// otherwise join on student.EnrollmentNo (if that column exists).
+$joinSql = '';
+if ($col_student) {
+    $studentJoinKey = null;
+    if (preg_match('/id$/i', $col_student) || stripos($col_student, 'student') !== false) {
+        $studentJoinKey = 'StudentID';
+    } else {
+        $studentJoinKey = 'EnrollmentNo';
+    }
 
-$openStatuses = ['Pending','Pending Review','Under Investigation','Hearing Scheduled','Open','Ongoing','In Progress'];
-$openWhere = '';
-if ($col_status) {
-    $placeholders = implode("','", array_map([$mysqli,'real_escape_string'],$openStatuses));
-    $openWhere = " AND `{$col_status}` IN ('{$placeholders}')";
+    // verify the chosen column exists in student table
+    $chk = $mysqli->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'student' AND COLUMN_NAME = '".$mysqli->real_escape_string($studentJoinKey)."' LIMIT 1");
+    if ($chk && $chk->num_rows) {
+        if ($chk) $chk->free();
+        $joinSql = " LEFT JOIN `student` AS s ON s.`{$studentJoinKey}` = `{$ftAlias}`.`{$col_student}`";
+        // create a readable student_name column (first + last) from student table
+        $selectCols[] = "TRIM(CONCAT(COALESCE(s.FirstName,''),' ',COALESCE(s.LastName,''))) AS student_name";
+    } else {
+        if ($chk) $chk->free();
+    }
 }
 
-$orderBy = $col_report_date ?? $col_id ?? '1';
-$sql = "SELECT {$selectSql} FROM `{$foundTable}` WHERE 1 {$openWhere} ORDER BY `{$orderBy}` DESC LIMIT 200";
+// --- NEW: define open statuses and build WHERE safely ---
+$openStatuses = ['Pending','Pending Review','Under Investigation','Hearing Scheduled','Open','Ongoing','In Progress'];
+
+$selectSql = count($selectCols) ? implode(', ', $selectCols) : "{$ftAlias}.*";
+
+// build the static "open" clause (non-parameterized, safe because values are escaped)
+$openWhere = '';
+if ($col_status && is_array($openStatuses) && count($openStatuses) > 0) {
+    $escaped = array_map([$mysqli, 'real_escape_string'], $openStatuses);
+    $placeholders = implode("','", $escaped);
+    $openWhere = " AND `{$ftAlias}`.`{$col_status}` IN ('{$placeholders}')";
+}
+
+// --- NEW: Search handling (q = query, field = all|student|id|description|status|severity) ---
+$searchTerm  = trim((string)($_GET['q'] ?? ''));
+$searchField = ($_GET['field'] ?? 'all');
+
+$searchWhere = '';
+$params = [];
+$types = '';
+
+if ($searchTerm !== '') {
+    $like = '%' . $searchTerm . '%';
+    // Build clauses using qualified column names (alias $ftAlias for case table, 's' for student join)
+    switch ($searchField) {
+        case 'student':
+            if ($joinSql !== '') {
+                $searchWhere = "(TRIM(CONCAT(COALESCE(s.FirstName,''),' ',COALESCE(s.LastName,''))) LIKE ? OR COALESCE(s.EnrollmentNo,'') LIKE ? OR `{$ftAlias}`.`{$col_student}` LIKE ?)";
+                $types .= 'sss'; $params[] = $like; $params[] = $like; $params[] = $like;
+            } elseif ($col_student) {
+                $searchWhere = "`{$ftAlias}`.`{$col_student}` LIKE ?";
+                $types .= 's'; $params[] = $like;
+            }
+            break;
+        case 'id':
+            if ($col_id) {
+                $searchWhere = "`{$ftAlias}`.`{$col_id}` LIKE ?";
+                $types .= 's'; $params[] = $like;
+            }
+            break;
+        case 'description':
+            if ($col_desc) {
+                $searchWhere = "`{$ftAlias}`.`{$col_desc}` LIKE ?";
+                $types .= 's'; $params[] = $like;
+            }
+            break;
+        case 'status':
+            if ($col_status) {
+                $searchWhere = "`{$ftAlias}`.`{$col_status}` LIKE ?";
+                $types .= 's'; $params[] = $like;
+            }
+            break;
+        case 'severity':
+            if ($col_severity) {
+                $searchWhere = "`{$ftAlias}`.`{$col_severity}` LIKE ?";
+                $types .= 's'; $params[] = $like;
+            }
+            break;
+        default:
+            // all: combine student, id, description, status, severity where available
+            $parts = [];
+            if ($joinSql !== '') {
+                $parts[] = "TRIM(CONCAT(COALESCE(s.FirstName,''),' ',COALESCE(s.LastName,''))) LIKE ?";
+                $parts[] = "COALESCE(s.EnrollmentNo,'') LIKE ?";
+                $types .= 'ss'; $params[] = $like; $params[] = $like;
+            } elseif ($col_student) {
+                $parts[] = "`{$ftAlias}`.`{$col_student}` LIKE ?";
+                $types .= 's'; $params[] = $like;
+            }
+            if ($col_id) { $parts[] = "`{$ftAlias}`.`{$col_id}` LIKE ?"; $types .= 's'; $params[] = $like; }
+            if ($col_desc) { $parts[] = "`{$ftAlias}`.`{$col_desc}` LIKE ?"; $types .= 's'; $params[] = $like; }
+            if ($col_status) { $parts[] = "`{$ftAlias}`.`{$col_status}` LIKE ?"; $types .= 's'; $params[] = $like; }
+            if ($col_severity) { $parts[] = "`{$ftAlias}`.`{$col_severity}` LIKE ?"; $types .= 's'; $params[] = $like; }
+            if (!empty($parts)) $searchWhere = '(' . implode(' OR ', $parts) . ')';
+            break;
+    }
+}
+
+// Build final SQL (apply openWhere then searchWhere). Use parameterized binding for searchWhere only.
+$orderByRaw = $col_report_date ?? $col_id ?? null;
+if ($orderByRaw) {
+    $orderBy = "`{$ftAlias}`.`".$mysqli->real_escape_string($orderByRaw)."`";
+} else {
+    $orderBy = '1';
+}
+
+$sql = "SELECT {$selectSql} FROM `{$foundTable}` AS {$ftAlias} {$joinSql} WHERE 1 {$openWhere}";
+if ($searchWhere !== '') {
+    $sql .= " AND {$searchWhere}";
+}
+$sql .= " ORDER BY {$orderBy} DESC LIMIT 200";
 
 $stmt = $mysqli->prepare($sql);
 if (!$stmt) { echo 'Query prepare failed: '.$mysqli->error; exit; }
+
+// bind parameters if any
+if (!empty($params)) {
+    $bind = [];
+    $bind[] = $types;
+    for ($i = 0; $i < count($params); $i++) {
+        $bind[] = &$params[$i];
+    }
+    call_user_func_array([$stmt, 'bind_param'], $bind);
+}
+
 $stmt->execute();
 $result = $stmt->get_result();
 $cases = $result->fetch_all(MYSQLI_ASSOC);
@@ -105,6 +222,27 @@ $stmt->close();
         <h3>Lecturer Review Dashboard</h3>
         <a href="index.php" class="btn btn-outline-secondary btn-sm">Back</a>
     </div>
+
+    <!-- Search bar -->
+    <form class="row g-2 mb-3" method="get" action="lecturer_dashboard.php" role="search">
+        <div class="col-auto">
+            <select name="field" class="form-select form-select-sm">
+                <option value="all" <?php echo (isset($searchField) && $searchField === 'all') ? 'selected' : ''; ?>>All</option>
+                <option value="student" <?php echo (isset($searchField) && $searchField === 'student') ? 'selected' : ''; ?>>Student</option>
+                <option value="id" <?php echo (isset($searchField) && $searchField === 'id') ? 'selected' : ''; ?>>Case ID</option>
+                <option value="description" <?php echo (isset($searchField) && $searchField === 'description') ? 'selected' : ''; ?>>Description</option>
+                <option value="status" <?php echo (isset($searchField) && $searchField === 'status') ? 'selected' : ''; ?>>Status</option>
+                <option value="severity" <?php echo (isset($searchField) && $searchField === 'severity') ? 'selected' : ''; ?>>Severity</option>
+            </select>
+        </div>
+        <div class="col">
+            <input name="q" value="<?php echo htmlspecialchars($searchTerm ?? '', ENT_QUOTES, 'UTF-8'); ?>" class="form-control form-control-sm" type="search" placeholder="Search cases (press Enter)" aria-label="Search cases">
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-outline-primary btn-sm" type="submit">Search</button>
+            <a href="lecturer_dashboard.php" class="btn btn-outline-secondary btn-sm">Reset</a>
+        </div>
+    </form>
 
     <div class="card p-3 mb-3">
         <h6 class="mb-2">Open cases (ready for review)</h6>
@@ -120,11 +258,11 @@ $stmt->close();
                     <?php foreach ($cases as $c): ?>
                         <tr data-case-id="<?php echo htmlspecialchars($c['id'] ?? '', ENT_QUOTES); ?>"
                             data-desc="<?php echo htmlspecialchars($c['description'] ?? '', ENT_QUOTES); ?>"
-                            data-student="<?php echo htmlspecialchars($c['student'] ?? '', ENT_QUOTES); ?>"
+                            data-student="<?php echo htmlspecialchars($c['student_name'] ?? $c['student'] ?? '', ENT_QUOTES); ?>"
                             data-status="<?php echo htmlspecialchars($c['status'] ?? '', ENT_QUOTES); ?>"
                             data-severity="<?php echo htmlspecialchars($c['severity'] ?? '', ENT_QUOTES); ?>">
                             <td><?php echo htmlspecialchars($c['id'] ?? '', ENT_QUOTES); ?></td>
-                            <td><?php echo htmlspecialchars($c['student'] ?? '', ENT_QUOTES); ?></td>
+                            <td><?php echo htmlspecialchars($c['student_name'] ?? $c['student'] ?? '', ENT_QUOTES); ?></td>
                             <td><?php echo htmlspecialchars($c['reported'] ?? '', ENT_QUOTES); ?></td>
                             <td style="max-width:360px;white-space:pre-wrap;"><?php echo nl2br(htmlspecialchars(substr($c['description'] ?? '',0,600), ENT_QUOTES)); ?></td>
                             <td><?php echo htmlspecialchars($c['severity'] ?? '', ENT_QUOTES); ?></td>
