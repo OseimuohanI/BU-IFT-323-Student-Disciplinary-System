@@ -324,7 +324,13 @@ if ($enRes) {
                     if (!json) throw new Error('Invalid server response');
 
                     if (json.success) {
-                        // Close modal then reload to update UI
+                        // if server provided role, redirect lecturer to lecturer dashboard
+                        const role = (json.role || '').toString().toLowerCase();
+                        if (role === 'lecturer') {
+                            window.location.href = 'lecturer_dashboard.php';
+                            return;
+                        }
+                        // Close modal then reload to update UI for other roles
                         const modalEl = document.getElementById('loginModal');
                         const bsModal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
                         bsModal.hide();
