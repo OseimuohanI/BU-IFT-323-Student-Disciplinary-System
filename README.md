@@ -166,13 +166,6 @@ When reporting errors, copy the exact JSON/HTML response body and the Request UR
 ---
 
 ## License
-Specify your chosen license here (e.g., MIT). Add LICENSE file to project root.
+
 
 ---
-
-If you want, I can:
-- Generate a shorter "quick start" README for non-technical users,
-- Create an example `config.php` template file in the repo,
-- Produce a developer checklist for adding new metrics to student_dashboard.php.
-
-Tell me which of the above to add.
