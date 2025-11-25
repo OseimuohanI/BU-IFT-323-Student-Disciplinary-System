@@ -1,3 +1,6 @@
+CREATE DATABASE IF NOT EXISTS student_disciplinary_system;
+USE student_disciplinary_system;
+
 CREATE TABLE offensetype (
     OffenseTypeID INT PRIMARY KEY,
     Code VARCHAR(20),
