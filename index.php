@@ -8,7 +8,7 @@ if (file_exists(__DIR__ . '/config.php')) {
 
 // If $mysqli isn't provided by config.php, create a connection with defaults
 if (!isset($mysqli) || !($mysqli instanceof mysqli)) {
-    $db_host = defined('DB_HOST') ? DB_HOST : '127.0.0.1:3305';
+    $db_host = defined('DB_HOST') ? DB_HOST : '127.0.0.1';
     $db_user = defined('DB_USER') ? DB_USER : 'root';
     $db_pass = defined('DB_PASS') ? DB_PASS : '';
     $db_name = defined('DB_NAME') ? DB_NAME : 'student_disciplinary_system';
