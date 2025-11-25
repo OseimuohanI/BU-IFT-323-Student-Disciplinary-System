@@ -178,32 +178,147 @@ if ($foundTable && $caseColMap['student_fk']) {
         if (!empty($caseColMap[$k])) $selectCols[] = "`{$caseColMap[$k]}`";
     }
     if (empty($selectCols)) $selectCols = ['*'];
+
+    // resolved status names (used to separate closed/resolved cases)
+    $resolvedNames = ['Closed','Resolved','Decided','Finalized','Completed'];
+    $escapedResolved = array_map(function($s) use ($mysqli){ return $mysqli->real_escape_string($s); }, $resolvedNames);
+    $resolvedList = "'" . implode("','", $escapedResolved) . "'";
+
     $sql = "SELECT " . implode(',', $selectCols) . " FROM `{$foundTable}` WHERE `{$fk}` = ? ";
-    if ($caseColMap['status']) $sql .= " AND `{$caseColMap['status']}` NOT IN ('Closed','Resolved','Decided','Finalized','Completed') ";
+
+    // Build exclusion clauses so closed/resolved cases are NOT shown in "recentOpen"
+    $openClauses = [];
+    if (!empty($caseColMap['status'])) {
+        $openClauses[] = "`{$caseColMap['status']}` NOT IN ({$resolvedList})";
+    }
+    if (!empty($caseColMap['resolved_date'])) {
+        // exclude rows that already have a resolved date
+        $openClauses[] = "(`{$caseColMap['resolved_date']}` IS NULL OR `{$caseColMap['resolved_date']}` = '')";
+    }
+    if (!empty($openClauses)) {
+        $sql .= " AND (" . implode(' AND ', $openClauses) . ")";
+    }
+
     $sql .= " ORDER BY " . ($caseColMap['report_date'] ?? $caseColMap['id'] ?? '1') . " DESC LIMIT 20";
     $stmt = $mysqli->prepare($sql);
     $stmt->bind_param('s', $fkValue);
     $stmt->execute(); $recentOpen = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
 
-    // Recent resolved cases (include description)
-    if ($caseColMap['resolved_date']) {
-        $selectCols = [];
-        foreach (['id','report_date','offense','description','severity','status','resolved_date','decision','sanctions'] as $k) {
-            if (!empty($caseColMap[$k])) $selectCols[] = "`{$caseColMap[$k]}`";
-        }
-        if (empty($selectCols)) $selectCols = ['*'];
-        $sql = "SELECT " . implode(',', $selectCols) . " FROM `{$foundTable}` WHERE `{$fk}` = ? AND `{$caseColMap['resolved_date']}` IS NOT NULL AND `{$caseColMap['resolved_date']}` <> '' ORDER BY `{$caseColMap['resolved_date']}` DESC LIMIT 20";
+    // Recent resolved cases: include rows with a resolved_date OR rows whose status is a resolved/closed label
+    $recentResolved = [];
+    $resolvedSelectCols = [];
+    foreach (['id','report_date','offense','description','severity','status','resolved_date','decision','sanctions'] as $k) {
+        if (!empty($caseColMap[$k])) $resolvedSelectCols[] = "`{$caseColMap[$k]}`";
+    }
+    if (empty($resolvedSelectCols)) $resolvedSelectCols = ['*'];
+
+    $resolvedConds = [];
+    if (!empty($caseColMap['resolved_date'])) {
+        $resolvedConds[] = "`{$caseColMap['resolved_date']}` IS NOT NULL AND `{$caseColMap['resolved_date']}` <> ''";
+    }
+    if (!empty($caseColMap['status'])) {
+        $resolvedConds[] = "`{$caseColMap['status']}` IN ({$resolvedList})";
+    }
+
+    if (!empty($resolvedConds)) {
+        $sql = "SELECT " . implode(',', $resolvedSelectCols) . " FROM `{$foundTable}` WHERE `{$fk}` = ? AND (" . implode(' OR ', $resolvedConds) . ") ORDER BY " . ($caseColMap['resolved_date'] ?? $caseColMap['report_date'] ?? $caseColMap['id'] ?? '1') . " DESC LIMIT 20";
         $stmt = $mysqli->prepare($sql);
         $stmt->bind_param('s', $fkValue);
         $stmt->execute(); $recentResolved = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
     }
 
-    // sanctions list
-    if ($caseColMap['sanctions']) {
-        $sql = "SELECT `{$caseColMap['id']}` AS id, `{$caseColMap['offense']}` AS offense, `{$caseColMap['sanctions']}` AS sanction, `{$caseColMap['status']}` AS status FROM `{$foundTable}` WHERE `{$fk}` = ? AND `{$caseColMap['sanctions']}` IS NOT NULL LIMIT 20";
-        $stmt = $mysqli->prepare($sql);
-        $stmt->bind_param('s', $fkValue);
-        $stmt->execute(); $sanctionsList = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
+    // sanctions list (try case table first, but prefer disciplinaryaction.ActionType when available)
+    // 1) Try disciplinaryaction table (preferred) and read ActionType (or similar) column
+    $daFound = false;
+    $daList = [];
+    $tbl = 'disciplinaryaction';
+    $chk = $mysqli->query("SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '".$mysqli->real_escape_string($tbl)."' LIMIT 1");
+    if ($chk && $chk->num_rows) {
+        $daFound = true;
+        $chk->free();
+
+        // discover columns
+        $daCols = [];
+        $cr = $mysqli->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '".$mysqli->real_escape_string($tbl)."'");
+        if ($cr) {
+            while ($r = $cr->fetch_assoc()) $daCols[] = $r['COLUMN_NAME'];
+            $cr->free();
+        }
+
+        // pick useful columns
+        $da_action = pick_col($daCols, ['ActionType','Action','Type','SanctionType','ActionName']);
+        $da_case   = pick_col($daCols, ['CaseID','case_id','IncidentID','incident_id']);
+        $da_student= pick_col($daCols, ['StudentID','student_id','EnrollmentNo','MatricNo','StudentNo']);
+        $da_notes  = pick_col($daCols, ['Notes','notes','Details','Description','Remarks']);
+        $da_at     = pick_col($daCols, ['AppliedAt','created_at','created','DateApplied','timestamp']);
+        $da_id     = pick_col($daCols, ['id','ID','ActionID','DisciplinaryActionID']);
+
+        // decide student match value depending on the column the table exposes
+        $studentMatch = null;
+        if ($da_student) {
+            if (preg_match('/studentid$/i', $da_student) || preg_match('/^studentid$/i', $da_student) || preg_match('/\bid\b/i', $da_student)) {
+                $studentMatch = $profile['StudentID'] ?? $studentId;
+            } else {
+                $studentMatch = $profile[$col_enroll] ?? null;
+            }
+        }
+
+        // build select
+        $sel = [];
+        if ($da_id) $sel[] = "`{$da_id}` AS id";
+        if ($da_action) $sel[] = "`{$da_action}` AS action";
+        if ($da_notes) $sel[] = "`{$da_notes}` AS notes";
+        if ($da_case) $sel[] = "`{$da_case}` AS case_id";
+        if ($da_at) $sel[] = "`{$da_at}` AS applied_at";
+        if (empty($sel)) $sel[] = '*';
+
+        // attempt to fetch by student column when possible
+        if ($da_student && $studentMatch !== null) {
+            $sql = "SELECT " . implode(',', $sel) . " FROM `{$tbl}` WHERE `{$da_student}` = ? ORDER BY " . ($da_at ? "`{$da_at}` DESC" : ($da_id ? "`{$da_id}` DESC" : '1')) . " LIMIT 40";
+            $stmt = $mysqli->prepare($sql);
+            if ($stmt) {
+                $stmt->bind_param('s', $studentMatch);
+                $stmt->execute();
+                $daList = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+                $stmt->close();
+            }
+        }
+
+        // fallback: if action column exists but no student match, try fetch recent actions overall (limited)
+        if (empty($daList) && $da_action) {
+            $sql = "SELECT " . implode(',', $sel) . " FROM `{$tbl}` ORDER BY " . ($da_at ? "`{$da_at}` DESC" : ($da_id ? "`{$da_id}` DESC" : '1')) . " LIMIT 20";
+            $stmt = $mysqli->prepare($sql);
+            if ($stmt) {
+                $stmt->execute();
+                $daList = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+                $stmt->close();
+            }
+        }
+    } elseif ($chk) {
+        $chk->free();
+    }
+
+    // 2) If disciplinaryaction returned items, use them as sanctions/tasks list (map fields to expected shape)
+    if (!empty($daList)) {
+        $sanctionsList = [];
+        foreach ($daList as $row) {
+            $sanctionsList[] = [
+                'id' => $row['id'] ?? ($row[$da_id] ?? null),
+                'offense' => $row['case_id'] ?? null,
+                'sanction' => $row['action'] ?? ($row[$da_action] ?? ''),
+                'status' => null,
+                'notes' => $row['notes'] ?? null,
+                'applied_at' => $row['applied_at'] ?? null
+            ];
+        }
+    } else {
+        // fallback to case-table sanctions column if present
+        if ($caseColMap['sanctions']) {
+            $sql = "SELECT `{$caseColMap['id']}` AS id, `{$caseColMap['offense']}` AS offense, `{$caseColMap['sanctions']}` AS sanction, `{$caseColMap['status']}` AS status FROM `{$foundTable}` WHERE `{$fk}` = ? AND `{$caseColMap['sanctions']}` IS NOT NULL LIMIT 20";
+            $stmt = $mysqli->prepare($sql);
+            $stmt->bind_param('s', $fkValue);
+            $stmt->execute(); $sanctionsList = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
+        }
     }
 }
 

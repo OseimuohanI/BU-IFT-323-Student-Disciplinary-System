@@ -237,4 +237,166 @@ try {
     echo json_encode($payload);
     exit;
 }
+
+// Insert sanction data into disciplinaryaction table (best-effort column mapping)
+
+if (file_exists(__DIR__ . '/config.php')) require_once __DIR__ . '/config.php';
+
+$db_host = defined('DB_HOST') ? DB_HOST : '127.0.0.1:3305';
+$db_user = defined('DB_USER') ? DB_USER : 'root';
+$db_pass = defined('DB_PASS') ? DB_PASS : '';
+$db_name = defined('DB_NAME') ? DB_NAME : 'student_disciplinary_system';
+
+$mysqli = new mysqli($db_host, $db_user, $db_pass, $db_name);
+if ($mysqli->connect_errno) {
+    header('Content-Type: application/json');
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'DB connect failed']);
+    exit;
+}
+$mysqli->set_charset('utf8mb4');
+
+session_start();
+$currentUser = $_SESSION['user'] ?? null;
+function user_has_role($user, array $roles = []) {
+    if (!$user) return false;
+    $role = $user['role'] ?? $user['Role'] ?? $user['user_type'] ?? null;
+    if (!$role) return false;
+    return in_array(strtolower($role), array_map('strtolower', $roles), true);
+}
+if (!user_has_role($currentUser, ['lecturer','admin'])) {
+    header('Content-Type: application/json');
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+    exit;
+}
+
+$raw = file_get_contents('php://input');
+$data = json_decode($raw, true);
+if (!is_array($data)) {
+    header('Content-Type: application/json');
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Invalid JSON']);
+    exit;
+}
+
+$caseId        = isset($data['case_id']) ? trim((string)$data['case_id']) : '';
+$sanctionType  = trim((string)($data['sanction_type'] ?? ''));
+$durationDays  = $data['duration_days'] === '' ? null : ($data['duration_days'] !== null ? (int)$data['duration_days'] : null);
+$effectiveDate = trim((string)($data['effective_date'] ?? ''));
+$notes         = trim((string)($data['notes'] ?? ''));
+
+if ($sanctionType === '') {
+    header('Content-Type: application/json');
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Sanction type required']);
+    exit;
+}
+
+// ensure disciplinaryaction table exists
+$tbl = 'disciplinaryaction';
+$res = $mysqli->query("SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '".$mysqli->real_escape_string($tbl)."' LIMIT 1");
+if (!$res || $res->num_rows === 0) {
+    header('Content-Type: application/json');
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => "Table '{$tbl}' not found"]);
+    exit;
+}
+if ($res) $res->free();
+
+// fetch columns of disciplinaryaction
+$cols = [];
+$cRes = $mysqli->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '".$mysqli->real_escape_string($tbl)."'");
+if ($cRes) {
+    while ($r = $cRes->fetch_assoc()) $cols[] = $r['COLUMN_NAME'];
+    $cRes->free();
+}
+
+// helper to pick a column name from candidates (case-insensitive)
+function pick_col(array $cols, array $candidates) {
+    foreach ($candidates as $c) {
+        foreach ($cols as $col) if (strcasecmp($col,$c)===0) return $col;
+    }
+    foreach ($candidates as $c) {
+        foreach ($cols as $col) if (stripos($col,$c) !== false) return $col;
+    }
+    return null;
+}
+
+// Prefer exact target columns per reviewer request
+$col_actionType = pick_col($cols, ['ActionType','Action_Type','Action','ActionName','SanctionType']);
+$col_duration   = pick_col($cols, ['DurationDays','Duration_Days','Duration','Days','length']);
+$col_notes      = pick_col($cols, ['Notes','notes','Details','Description','Remarks']);
+$col_actionDate = pick_col($cols, ['ActionDate','action_date','EffectiveDate','AppliedAt','DateApplied']);
+$col_case       = pick_col($cols, ['CaseID','case_id','IncidentID','incident_id','Reference']);
+$col_by         = pick_col($cols, ['AppliedBy','CreatedBy','Author','StaffID','user_id']);
+$col_at         = pick_col($cols, ['RecordedAt','created_at','created','timestamp','DateRecorded']);
+
+// Build insert map preferring exact reviewer-specified columns
+$insertMap = [];
+if ($col_case && $caseId !== '') $insertMap[$col_case] = $caseId;
+if ($col_actionType) $insertMap[$col_actionType] = $sanctionType; // ActionType
+if ($col_duration) $insertMap[$col_duration] = ($durationDays === null ? null : $durationDays); // DurationDays
+if ($col_actionDate) $insertMap[$col_actionDate] = ($effectiveDate === '' ? null : $effectiveDate); // ActionDate
+if ($col_notes) $insertMap[$col_notes] = $notes; // Notes
+if ($col_by) $insertMap[$col_by] = $currentUser['UserID'] ?? $currentUser['Username'] ?? null;
+if ($col_at && !isset($insertMap[$col_at])) $insertMap[$col_at] = date('Y-m-d H:i:s');
+
+// Fallback: if none of the preferred columns exist, try to auto-map some common alternatives
+if (empty($insertMap)) {
+    header('Content-Type: application/json');
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'No suitable columns found in disciplinaryaction to store data']);
+    exit;
+}
+
+// Build INSERT
+$columns = array_keys($insertMap);
+$placeholders = implode(',', array_fill(0, count($columns), '?'));
+$colsSql = implode(',', array_map(function($c){ return "`$c`"; }, $columns));
+$sql = "INSERT INTO `{$tbl}` ({$colsSql}) VALUES ({$placeholders})";
+
+$stmt = $mysqli->prepare($sql);
+if (!$stmt) {
+    header('Content-Type: application/json');
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'Prepare failed: '.$mysqli->error]);
+    exit;
+}
+
+// Build types and params
+$types = '';
+$params = [];
+foreach ($insertMap as $col => $val) {
+    if (is_int($val) || (is_string($val) && preg_match('/^-?\d+$/',$val))) {
+        $types .= 'i';
+        $params[] = (int)$val;
+    } else {
+        $types .= 's';
+        $params[] = ($val === null ? null : (string)$val);
+    }
+}
+
+// bind params (references required)
+$bind_names = [];
+$bind_names[] = $types;
+for ($i=0;$i<count($params);$i++) {
+    $bind_names[] = &$params[$i];
+}
+call_user_func_array([$stmt, 'bind_param'], $bind_names);
+
+$ok = $stmt->execute();
+if (! $ok) {
+    header('Content-Type: application/json');
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'Insert failed: '.$stmt->error]);
+    $stmt->close();
+    exit;
+}
+$insertId = $stmt->insert_id;
+$stmt->close();
+
+header('Content-Type: application/json');
+echo json_encode(['success' => true, 'message' => 'Sanction recorded', 'id' => $insertId]);
+exit;
 ?>
