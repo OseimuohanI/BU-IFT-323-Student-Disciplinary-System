@@ -17,9 +17,9 @@ $role = $argv[4] ?? '';
 $hash = password_hash($password, PASSWORD_DEFAULT);
 
 require_once __DIR__ . '/../config/config.php'; // adjust path if needed
-$db_host = defined('DB_HOST') ? DB_HOST : '127.0.0.1:3305';
+$db_host = defined('DB_HOST') ? DB_HOST : '127.0.0.1';
 $db_user = defined('DB_USER') ? DB_USER : 'root';
-$db_pass = defined('DB_PASS') ? DB_PASS : '';
+$db_pass = defined('DB_PASS') ? DB_PASS : 'Aresthe1st';
 $db_name = defined('DB_NAME') ? DB_NAME : 'student_disciplinary_system';
 
 $mysqli = new mysqli($db_host, $db_user, $db_pass, $db_name);

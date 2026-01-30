@@ -10,7 +10,7 @@ if (file_exists(__DIR__ . '/config.php')) {
 if (!isset($mysqli) || !($mysqli instanceof mysqli)) {
     $db_host = defined('DB_HOST') ? DB_HOST : '127.0.0.1';
     $db_user = defined('DB_USER') ? DB_USER : 'root';
-    $db_pass = defined('DB_PASS') ? DB_PASS : '';
+    $db_pass = defined('DB_PASS') ? DB_PASS : 'Aresthe1st';
     $db_name = defined('DB_NAME') ? DB_NAME : 'student_disciplinary_system';
 
     $mysqli = new mysqli($db_host, $db_user, $db_pass, $db_name);
@@ -227,14 +227,61 @@ $result = $stmt->get_result();
                             <input name="password" type="password" class="form-control" required autocomplete="new-password">
                         </div>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" id="loginSubmit" class="btn btn-primary">Sign in</button>
+                    <div class="modal-footer d-flex justify-content-between">
+                        <small><a href="#" id="switchToRegister" class="text-decoration-none">Don't have an account? Register</a></small>
+                        <div>
+                            <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" id="loginSubmit" class="btn btn-primary">Sign in</button>
+                        </div>
                     </div>
                 </form>
             </div>
          </div>
      </div>
+
+    <!-- Register Modal -->
+    <div class="modal fade" id="registerModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <form id="registerForm" autocomplete="off" novalidate>
+                    <div class="modal-header">
+                        <h5 class="modal-title">Create Account</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="registerAlert" class="alert alert-danger d-none" role="alert"></div>
+                        <div class="mb-3">
+                            <label class="form-label">Register as</label>
+                            <select name="register_role" id="registerRole" class="form-select">
+                                <option value="">-- select account type --</option>
+                                <option value="student">Student</option>
+                                <option value="lecturer">Lecturer</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Username</label>
+                            <input name="username" type="text" class="form-control" required autocomplete="off" placeholder="Choose a username">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Password</label>
+                            <input name="password" type="password" class="form-control" required autocomplete="new-password" placeholder="At least 6 characters">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Full Name</label>
+                            <input name="fullname" type="text" class="form-control" required placeholder="Your full name">
+                        </div>
+                    </div>
+                    <div class="modal-footer d-flex justify-content-between">
+                        <small><a href="#" id="switchToLogin" class="text-decoration-none">Already have an account? Sign in</a></small>
+                        <div>
+                            <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" id="registerSubmit" class="btn btn-primary">Register</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
 
     <!-- Add Student Modal -->
     <div class="modal fade" id="addStudentModal" tabindex="-1" aria-hidden="true">
@@ -436,6 +483,106 @@ $result = $stmt->get_result();
                     alertBox.classList.remove('d-none');
                 } finally {
                     submitBtn.disabled = false;
+                }
+            });
+        }
+
+        // Modal switching between login and register
+        const switchToRegister = document.getElementById('switchToRegister');
+        const switchToLogin = document.getElementById('switchToLogin');
+        if (switchToRegister) {
+            switchToRegister.addEventListener('click', function(e){
+                e.preventDefault();
+                const loginModal = bootstrap.Modal.getInstance(document.getElementById('loginModal'));
+                loginModal.hide();
+                const registerModal = new bootstrap.Modal(document.getElementById('registerModal'));
+                registerModal.show();
+            });
+        }
+        if (switchToLogin) {
+            switchToLogin.addEventListener('click', function(e){
+                e.preventDefault();
+                const registerModal = bootstrap.Modal.getInstance(document.getElementById('registerModal'));
+                registerModal.hide();
+                const loginModal = new bootstrap.Modal(document.getElementById('loginModal'));
+                loginModal.show();
+            });
+        }
+
+        // Registration handler
+        const regForm = document.getElementById('registerForm');
+        const regAlert = document.getElementById('registerAlert');
+        const regSubmit = document.getElementById('registerSubmit');
+        if (regForm) {
+            regForm.addEventListener('submit', async function(e){
+                e.preventDefault();
+                regAlert.classList.add('d-none');
+                regAlert.textContent = '';
+                regSubmit.disabled = true;
+
+                const role = (regForm.register_role.value || '').toLowerCase();
+                const username = (regForm.username.value || '').trim();
+                const password = regForm.password.value || '';
+                const fullname = (regForm.fullname.value || '').trim();
+
+                if (!username || !password || !fullname) {
+                    regAlert.textContent = 'Username, password, and full name are required';
+                    regAlert.classList.remove('d-none');
+                    regSubmit.disabled = false;
+                    return;
+                }
+
+                if (password.length < 6) {
+                    regAlert.textContent = 'Password must be at least 6 characters';
+                    regAlert.classList.remove('d-none');
+                    regSubmit.disabled = false;
+                    return;
+                }
+
+                try {
+                    // Create user account
+                    const res = await fetch('register.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            username: username,
+                            password: password,
+                            fullname: fullname,
+                            role: role
+                        }),
+                        cache: 'no-store'
+                    });
+
+                    if (!res.ok) {
+                        let text = await res.text().catch(()=>null);
+                        throw new Error(text || 'Server error: ' + res.status);
+                    }
+
+                    const json = await res.json().catch(()=>null);
+                    if (!json) throw new Error('Invalid server response');
+
+                    if (json.success) {
+                        regAlert.classList.add('d-none');
+                        const regModal = bootstrap.Modal.getInstance(document.getElementById('registerModal'));
+                        regModal.hide();
+                        const loginModal = new bootstrap.Modal(document.getElementById('loginModal'));
+                        loginModal.show();
+                        regForm.reset();
+                        const loginAlert = document.getElementById('loginAlert');
+                        loginAlert.classList.add('alert-success');
+                        loginAlert.classList.remove('alert-danger', 'd-none');
+                        loginAlert.textContent = 'Account created! Please sign in.';
+                        document.getElementById('loginForm').username.focus();
+                        return;
+                    }
+
+                    regAlert.textContent = json.message || 'Registration failed';
+                    regAlert.classList.remove('d-none');
+                } catch (err) {
+                    regAlert.textContent = err.message || 'Network error';
+                    regAlert.classList.remove('d-none');
+                } finally {
+                    regSubmit.disabled = false;
                 }
             });
         }

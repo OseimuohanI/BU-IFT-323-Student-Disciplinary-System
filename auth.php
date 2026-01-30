@@ -4,9 +4,15 @@
 // On success sets $_SESSION['user'] and returns {"success":true}
 
 session_start();
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
+ini_set('display_errors', '0');
+ini_set('display_startup_errors', '0');
+error_reporting(E_ALL);
 
 $input = json_decode(file_get_contents('php://input'), true);
+if (!is_array($input)) {
+    $input = $_POST ?? [];
+}
 $username = trim($input['username'] ?? '');
 $password = $input['password'] ?? '';
 
@@ -18,9 +24,15 @@ if ($username === '' || $password === '') {
 // reuse config.php or fallback connection
 if (file_exists(__DIR__ . '/config.php')) {
     require_once __DIR__ . '/config.php';
+} elseif (file_exists(__DIR__ . '/config/config.php')) {
+    require_once __DIR__ . '/config/config.php';
 }
 if (!isset($mysqli) || !($mysqli instanceof mysqli)) {
-    $mysqli = new mysqli('127.0.0.1:3305', 'root', '', 'student_disciplinary_system');
+    $db_host = defined('DB_HOST') ? DB_HOST : '127.0.0.1';
+    $db_user = defined('DB_USER') ? DB_USER : 'root';
+    $db_pass = defined('DB_PASS') ? DB_PASS : '';
+    $db_name = defined('DB_NAME') ? DB_NAME : 'student_disciplinary_system';
+    $mysqli = new mysqli($db_host, $db_user, $db_pass, $db_name);
     if ($mysqli->connect_errno) {
         http_response_code(500);
         echo json_encode(['success' => false, 'message' => 'Database error']);
