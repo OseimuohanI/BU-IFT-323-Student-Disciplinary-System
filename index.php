@@ -137,6 +137,11 @@ $result = $stmt->get_result();
     <title>Students - Index</title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .modal-backdrop.show {
+            opacity: 0.7 !important;
+        }
+    </style>
 </head>
 <body class="bg-light">
 <div class="container py-4">
@@ -206,7 +211,7 @@ $result = $stmt->get_result();
     <?php endif; ?>
 
     <!-- Login Modal -->
-    <div class="modal fade" id="loginModal" tabindex="-1" aria-hidden="true">
+    <div class="modal fade" id="loginModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="<?php echo !$currentUser ? 'static' : 'true'; ?>" data-bs-keyboard="false">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <form id="loginForm" autocomplete="off" novalidate>
@@ -214,7 +219,7 @@ $result = $stmt->get_result();
                     <input type="text" name="fakeuser" id="fakeuser" autocomplete="off" style="position:absolute;left:-9999px;top:-9999px" aria-hidden="true" tabindex="-1">
                     <div class="modal-header">
                         <h5 class="modal-title">Login</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        <?php if ($currentUser): ?><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button><?php endif; ?>
                     </div>
                     <div class="modal-body">
                         <div id="loginAlert" class="alert alert-danger d-none" role="alert"></div>
@@ -798,6 +803,20 @@ $result = $stmt->get_result();
     <?php endif; ?>
 
 </div>
+
+<script>
+// Auto-show login modal for unauthenticated users on page load
+(function(){
+    const isLoggedIn = <?php echo $currentUser ? 'true' : 'false'; ?>;
+    if (!isLoggedIn) {
+        document.addEventListener('DOMContentLoaded', function() {
+            const loginModal = new bootstrap.Modal(document.getElementById('loginModal'));
+            loginModal.show();
+        });
+    }
+})();
+</script>
+
 </body>
 </html>
 <?php
